@@ -14,6 +14,16 @@ from eoslib import get_eos, glue_crust_and_core, eosLib
 import matplotlib.pyplot as plt
 plt.style.use('classic') 
 
+c=const.CGS_C
+G=const.CGS_G
+Msun=const.CGS_MSUN
+
+fm=1.e-13 #1femotometer in cm
+dens_conversion=const.CGS_AMU/(fm**3)
+edens_conversion=const.CGS_C**2
+
+#--------------------------------------------------------
+
 def save_obj(path, obj, name ):
     with open(path + name + '.pkl', 'wb') as f:
         pickle.dump(obj, f, pickle.HIGHEST_PROTOCOL)
@@ -23,13 +33,15 @@ def load_obj(path, name ):
         return pickle.load(f)
     
     
-#--------------------------------------------------
+#---------------------------------------------------------
 
 
 
 
 #-----------------------------------------------------
     
+
+
 
 def symm_tidal_params(lambda1,lambda2,q):
     """
