@@ -1,247 +1,292 @@
-#code is originally by Author: natj <nattila.joonas@gmail.com>; https://github.com/natj/tov
-#Modified by Rahul.Kashyap, rahulkashyap411@gmail.com/1.Sept.2018: using this code to get mass-radius-baryon_mass relationship for all eos to be used in the calculation of the kilonovae light curve
+#!/usr/bin/env python
+# coding: utf-8
+#Mass-Radius calculation of neutron star for general EOS
+#rahul.kashyap/21.Jul.2020: imported from kilonovastandardization project
+__author__ = "Rahul Kashyap"
+__maintainer__ = "Rahul Kashyap"
+__email__ = "rahulkashyap411@gmail.com"
 
-import sys
-import os
-import matplotlib
-matplotlib.use('agg')
-import matplotlib.pyplot as plt
-import numpy as np
-import units as cgs
-from math import pi
-from polytropes import monotrope, polytrope
-from crust import SLyCrust
-from eoslib import get_eos, glue_crust_and_core, eosLib
-from scipy.integrate import odeint
+"""
+Imported from natj <nattila.joonas@gmail.com>; https://github.com/natj/tov
+Additions: 
+(1) surface finding algorithm 
+(2) EOS table format with interpolation
+(3) calculation of tidal deformability 
+
+#rahul/21.Jan.2019: imported from kilonovastandardization project
+"""
+
+#import time
+from tovlib import *
 from scipy.integrate import solve_ivp
-from label_line import label_line
+#eos_file = './eos_tables/BLH_new_14-Apr-2020.lorene'
+#eos_file = './eos_tables/SLy.lorene'
 
-import math
 
-#from matplotlib import cm
-import palettable as pal
-cmap = pal.colorbrewer.qualitative.Set1_6.mpl_colormap
-#cmap = pal.cmocean.sequential.Matter_8.mpl_colormap #best so far
-#cmap = pal.wesanderson.Zissou_5.mpl_colormap
+is_sorted = lambda x: (np.diff(x)>=0).all()
 
-#--------------------------------------------------
+def eos_from_pres(pres_in,eos_file='./eos_tables/BLH_new_14-Apr-2020.lorene'):
+    
+    #if(pres_in.any()<0):
+    #    print('pressure input is negative; stop integration and go to previous radial point')
+    lg_pres_in = np.log10(pres_in)
+    
+    fm=1.e-13 #1femotometer in cm
+    dens_conversion=const.CGS_AMU/(fm**3)
+    edens_conversion=const.CGS_C**2
+    
+    ds=np.loadtxt(eos_file,comments='#',skiprows=9)
+    #rho=ds[:,1]; edens=ds[:,2]; pres=ds[:,3]
+    #print('all density > 0? ',all(i >= 0 for i in rho),'; all edens > 0? ',all(i >= 0 for i in edens),'; all pres > 0? ',all(i >= 0 for i in pres))
+    #print('is_sorted(rho)? ',is_sorted(rho),'; is_sorted(edens)? ',is_sorted(edens),'; is_sorted(pres) ',is_sorted(pres))
 
-def calc_tidal_deformability(C, Y,m):
+    lg_rho, lg_edens, lg_pres = (np.log10(ds[:,1]),np.log10(ds[:,2]),np.log10(ds[:,3]))
+
+    ind=lg_rho.argsort()                 # sorting mass and other array; necessary for interpolation routine
+    sort_ind = ind[::1]
+    lg_rho=lg_rho[sort_ind]
+    lg_edens=lg_edens[sort_ind]
+    lg_pres=lg_pres[sort_ind]
+    
+    
+    #print(is_sorted(rho))
+    #dp_dedens_arr=diff(pres)/diff(edens)/edens_conversion
+    #dp_dedens_arr = np.insert(dp_dedens_arr, 0, dp_dedens_arr[0], axis=0)
+
+    dlg_p_dlg_edens_arr=np.gradient(lg_pres,lg_edens) #https://numpy.org/doc/stable/reference/generated/numpy.gradient.html
+    gamma_arr = dlg_p_dlg_edens_arr
+    Gamma_arr=((np.power(10,lg_edens)*edens_conversion+np.power(10,lg_pres))/(np.power(10,lg_edens)*edens_conversion)) * gamma_arr 
+    
+    rho_out=10**(splev(lg_pres_in,splrep(lg_pres,lg_rho,k=3,s=0)) )
+    edens_out=10**(splev(lg_pres_in,splrep(lg_pres,lg_edens,k=3,s=0))) 
+    Gamma_out=splev(lg_pres_in,splrep(lg_pres,gamma_arr,k=3,s=0))
+    cs_out=np.sqrt((pres_in/edens_out)*(splev(lg_pres_in,splrep(lg_pres,gamma_arr,k=3,s=0))))  #sound speed: sqrt(dpres/dedens) = 
+    #gamma_out=5./3.
+    return rho_out*dens_conversion, edens_out, Gamma_out, cs_out
+
+
+def eos_from_dens(rho_in,eos_file='./eos_tables/BLH_new_14-Apr-2020.lorene'):
+    
+    lg_rho_in = np.log10(rho_in)
+    #print(lg_rho_in)
+    fm=1.e-13 #1femotometer in cm
+    dens_conversion=const.CGS_AMU/(fm**3)
+    edens_conversion=const.CGS_C**2
+    
+    ds=np.loadtxt(eos_file,comments='#',skiprows=9)
+    lg_rho, lg_edens, lg_pres = (np.log10(ds[:,1]*dens_conversion),np.log10(ds[:,2]),np.log10(ds[:,3]))
+    #print(lg_rho)
+    pres_out=10**(splev(lg_rho_in,splrep(lg_rho,lg_pres,k=3,s=0)) )
+    edens_out=10**(splev(lg_rho_in,splrep(lg_rho,lg_edens,k=3,s=0))) 
+    
+    return pres_out, edens_out
+
+
+
+
+
+###################################################################################3
+
+fm=1.e-13 #1femotometer in cm
+dens_conversion=const.CGS_AMU/(fm**3)
+edens_conversion=const.CGS_C**2
+
+eos_dir = './eos_tables/'
+eos_list=['eosDD2'] #['eosSLy','eosDD2','eos0']  #['eosSLy'] #,'eosDD2']
+c_list=['r','b','c','k','g']
+p_new=np.logspace(np.log10(6.e17),np.log10(1.e38),300)
+fig,((ax1,ax2),(ax3,ax4))=plt.subplots(nrows=2,ncols=2,figsize=(12,12))
+
+for eoskey,color in zip(eos_list,c_list):
+    print(f'############ {eoskey} ###########')
+    eos_file = eos_dir+eoskey+'.lorene'
+    eos_tabdata = np.loadtxt(eos_file,comments='#',skiprows=9)
+    rho, edens, pres = (eos_tabdata[:,1],eos_tabdata[:,2],eos_tabdata[:,3])
+    #print(eoskey,'\n####\n',rho,'\n#####\n',edens)
+    #for p_in in p_new:
+    rho_new, edens_new, gamma_new, cs_new = eos_from_pres(p_new,eos_file)
+    
+    print('is_sorted(edens_new)',is_sorted(edens_new),'is_sorted(rho_new)',is_sorted(rho_new))
+    print(f'rho limits: min:{min(rho_new):1.3e}, max={max(rho_new):1.3e}')
+    ax1.plot(rho*dens_conversion,pres,c=color,label=eoskey)
+    ax1.plot(rho_new,p_new,c=color,marker='x',label='interpolated '+eoskey)
+    #ax1.set_xlim([1.e14,1.e16])
+    #ax1.set_ylim([1.e32,1.e36])
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.set(xlabel=r'mass density ($g/cm^{3}$)',ylabel=r'pressure ($dyne/cm^2$)')
+    ax1.legend(loc=4)
+
+    ax2.plot(rho*dens_conversion,edens*edens_conversion,c=color,label=eoskey)
+    ax2.plot(rho_new,edens_new*edens_conversion,c=color,marker='x',label='interpolated '+eoskey)
+    #ax2.set_xlim([1.e14,1.e16])
+    #ax2.set_ylim([1.e34,1.e37])
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
+    ax2.set(xlabel=r'mass density ($g/cm^{3}$)',ylabel=r'edens ($g/cm^{3}$)')
+    ax2.legend(loc=4)
+
+    ax3.plot(rho_new,gamma_new,label=eoskey)
+    ax3.set_xscale('log')
+    ax3.set(xlabel=r'mass density ($g/cm^{3}$)',ylabel=r'$\Gamma$')
+    ax3.legend(loc=4)
+    
+    ax4.plot(rho_new,cs_new/const.CGS_C,label=eoskey)
+    ax4.set_xscale('log')
+    ax4.set_yscale('log')
+    ax4.set(xlabel=r'mass density ($g/cm^{3}$)',ylabel=r'sound speed (in $c$)')
+    
+    
+ax4.axhline(1/np.sqrt(3),ls='--',c='k',label='conformal limit cs: $c/\sqrt{3}$')
+ax4.legend(loc=4)
+plt.tight_layout()
+#plt.savefig('eos_plots_phase.png',dpi=150)
+
+plt.show()
+
+## saving eos data in a file in a specific format -- 
+"""key='BLQ'
+rho_new,edens_new,gamma_new=eos_from_pres(p_new,'./eos_tables/BLQ_gibbs_180_10-Mar-2020.lorene') #returns in cgs
+index=np.array([int(i) for i in range(len(p_new))])
+np.savetxt(f'./eos_tables/{key}_data.out',np.c_[index, rho_new/dens_conversion, edens_new/edens_conversion, p_new, gamma_new],header='\n#i rho edens pres gamma',comments=f'#density, pressure and energy density in cgs units for eos={key}.\n')
+
+key='BLH'
+rho_new,edens_new,gamma_new=eos_from_pres(p_new,'./eos_tables/BLH_new_14-Apr-2020.lorene') #returns in cgs
+index=np.array([int(i) for i in range(len(p_new))])
+np.savetxt(f'./eos_tables/{key}_data.out',np.c_[index, rho_new/dens_conversion, edens_new/edens_conversion, p_new, gamma_new],header='\n#i rho edens pres gamma',comments=f'#density, pressure and energy density in cgs units for eos={key}.\n')
+"""
+
+## Root finding by reducing the radial interval and by using scipy.rootfind functions. 
+## Works and matches with the MATLAB code.. although there are problems of (1) Speed and (2) accuracy 
+from scipy import optimize
+eos_file = './eos_tables/eos4.lorene'
+#eos_file = './eos_tables/eos0.lorene'  #eosBHB
+
+
+def calc_tidal_deformability(C, Y):
     # """ Compute the dimensionless tidal deformability parameter Lambda from the compactness C and 
-# the Lindblom y-potential at the surface of a polytropic star"""
-
-# Eq.(C1,C2) of Lindblom & Indik 2014
+    # the Lindblom y-potential at the surface of a polytropic star"""
+    # Eq.(C1,C2) of Lindblom & Indik 2014
     zeta = 4. * C**3 * (13. - 11.*Y + C*(3.*Y-2.) + 2.*(C**2)*(1.+Y)) + 3. * ((1.-2.*C)**2) * (2. - Y + 2.*C*(Y-1.)) *np.log(1.-2.*C) + 2. * C * (6. - 3.*Y + 3.*C*(5.*Y-8.))
     Lambda_dimensionless = (16./(15.*zeta)) * ((1.-2.*C)**2) * (2. + 2.*C*(Y-1.) - Y)  #dimensionless tidal deformability
-    lambda_dimensional =   Lambda_dimensionless/cgs.G *(cgs.G*m*cgs.Msun/cgs.c**2)**5
-    return lambda_dimensional
+    #lambda_dimensional =   Lambda_dimensionless/const.CGS_G *(const.CGS_G*m*const.CGS_MSUN/const.CGS_C**2)**5
+    return Lambda_dimensionless
 
-class tov:
+def tov(r,y):
 
-    def __init__(self, peos):
-        self.physical_eos = peos
+    [P, m, m_baryon, yp] = y
+    #if(P<0):
+    #    sys.exit()
+    #if eos_file != None:
+    #P,dummy = eos_from_dens(rhoc,eos_file)
+    rho,eden,eos_gamma, cs = eos_from_pres(P,eos_file)
 
-    def tov(self, y,r):
-        P, m, m_baryon, yp = y
-        eden = self.physical_eos.edens_inv( P )
-        rho = self.physical_eos.rho( P )
-        eos_gamma = self.physical_eos.gamma_inv(P)
+    G=const.CGS_G; c=const.CGS_C 
 
-        dPdr = -cgs.G*(eden + P/cgs.c**2)*(m + 4.0*pi*r**3*P/cgs.c**2)
-        dPdr = dPdr/(r*(r - 2.0*cgs.G*m/cgs.c**2))
-        dmdr = 4.0*pi*r**2*eden
-	dm_baryondr = 4.0*pi*r**2*rho*(1-2*cgs.G*m/(r*cgs.c**2))**(-0.5)
-        G=cgs.G; c=cgs.c
-        
-        rho=eden*c**2
-        dypdr= -yp**2/r -(r + (G/c**4)*4*np.pi*r**3*(P-rho))*yp/(r*(r-2*G*m/c**2)) + (G**2/c**4)*(4*(m+4*np.pi*r**3*P/c**2)**2)/(r*(r-2*G*m/c**2)**2) + 6/(r-2*G*m/c**2) - 4*np.pi*(r**2)*(5*rho+9*P+(rho+P)**2/(P*eos_gamma))*G/(c**4 * (r-2*G*m/c**2))
+    dPdr = -G*(eden + P/c**2)*(m + 4.0*np.pi*r**3*P/c**2)
+    dPdr = dPdr/(r*(r - 2.0*G*m/c**2))
+    dmdr = 4.0*np.pi*r**2*eden
+    dm_baryondr = dmdr/np.sqrt(1-2*G*m/(r*c**2))
+    #G=cgs.G; c=cgs.c
 
-        return [dPdr, dmdr, dm_baryondr,dypdr]
+    rho=eden*const.CGS_C**2
+    dypdr= -yp**2/r -(r + (G/c**4)*4*np.pi*r**3*(P-rho))*yp/(r*(r-2*G*m/c**2)) + (G**2/c**4)*(4*(m+4*np.pi*r**3*P/c**2)**2)/(r*(r-2*G*m/c**2)**2) + 6/(r-2*const.CGS_G*m/const.CGS_C**2) - 4*np.pi*(r**2)*(5*rho+9*P+(rho+P)**2/(P*eos_gamma))*G/(c**4 * (r-2*G*m/c**2))
 
-    def tovsolve(self, rhoc):
+    return [dPdr, dmdr, dm_baryondr,dypdr]
 
-        N = 2000
-        r = np.linspace(1.e0, 1.8e6, N)
-        #r = np.logspace(0.0,6.3,N)
-        P = self.physical_eos.pressure( rhoc )
-        eden = self.physical_eos.edens_inv( P )
-        rho = self.physical_eos.rho( P )
-        m = 4.0*pi*r[0]**3*eden
-	m_baryon = 4.0*pi*r[0]**3*rho*(1-2*cgs.G*m/(r[0]*cgs.c**2))**(-0.5)
-        yp=2.
-        psol = odeint(self.tov, [P, m, m_baryon, yp], r, rtol=1.0e-6, atol=1.0e-4)
-        #psol = solve_ivp(self.tov, [1.e0,5.8e6] ,[P, m, m_baryon, yp], method='RK45',t_eval=r )
-        #print m, m_baryon, rhoc
-        return r, psol[:,0], psol[:,1], psol[:,2], psol[:,3]
-        #return psol.t, psol.y[0], psol.y[1], psol.y[2], psol.y[3] 
-
-    def mass_radius(self):
-        N = 800
-        mcurve = np.zeros(N)
-        rcurve = np.zeros(N)
-	mbcurve = np.zeros(N)
-        ypcurve = np.zeros(N)
-        rhocs = np.logspace(12.5, 20.0, N)
-
-        mass_max = 0.0
-        j = 0
-        for rhoc in rhocs:
-            rad, press, mass, mass_baryon, yp_lambda = self.tovsolve(rhoc)
-
-            rad  /= 1.0e5 #cm to km
-            mass /= cgs.Msun
-	    mass_baryon /=cgs.Msun
-	    #print self.peos
-	    #print rad
-	    #print "Central Density=%f, Gravitational Mass=%f, Baryonic Mass=%f, Radius=%f"%(rhoc,mass.max(),mass_baryon.max(),rad.max())
-
-            mstar = mass[-1]
-            rstar = rad[-1]
-            ypstar = yp_lambda[-1]
-            for i, p in enumerate(press):
-                if p > 0.0:
-                    mstar = mass[i]
-                    rstar = rad[i]
-		    mbaryonStar = mass_baryon[i]
-                    ypstar = yp_lambda[i]
-            mcurve[j] = mstar
-            rcurve[j] = rstar
-	    mbcurve[j] = mbaryonStar
-            
-            C=(cgs.G/cgs.c**2)*(mstar*cgs.Msun)/(rstar*1.e5)
-            ypcurve[j] = ypstar
-            ypcurve[j] = calc_tidal_deformability(C,ypstar,mstar) 
-	    
-
-
-            j += 1
-            if mass_max < mstar:
-                mass_max = mstar
-            else:
-                break
-
-        return mcurve[:j], rcurve[:j], rhocs[:j], mbcurve[:j], ypcurve[:j]
-
-
-#--------------------------------------------------
-def main(argv):
-
-    plt.rc('font', family='serif')
-    plt.rc('xtick', labelsize=7)
-    plt.rc('ytick', labelsize=7)
-    plt.rc('axes', labelsize=7)
+def tovsolve(rhoc,r_arr):
+    P,dummy = eos_from_dens(rhoc,eos_file)
+    rho,eden,Gamma,cs = eos_from_pres(P,eos_file)
     
+    rad_low = r_arr[0]; rad_high = r_arr[-1]
+    print(rad_low,rad_high)
+    
+    rmin = r_arr[0]
+    r3=rmin**3
+    m = 4./3.*np.pi*r3*eden
+    m_baryon = 4./3.*np.pi*r3*eden*(1-2*const.CGS_G*m/(rmin*const.CGS_C**2))**(-0.5)
+    yp=2.
+    #psol = odeint(tov, [P, m, m_baryon, yp], r_arr, rtol=1.0e-6, atol=1.0e-4,tfirst=True)
 
-    fig = plt.figure(figsize=(3.54, 2.19)) #single column fig
-    #fig = plt.figure(figsize=(7.48, 4.0))  #two column figure
-    gs = plt.GridSpec(1, 1)
+    psol = solve_ivp(tov, [rad_low, rad_high] ,[P, m, m_baryon, yp], method='RK45',t_eval=r_arr)
+    #print m, m_baryon, rhoc
+    #return r_arr, psol[:,0], psol[:,1], psol[:,2], psol[:,3]
+    return psol.t, psol.y[0], psol.y[1], psol.y[2], psol.y[3] 
 
-    ax = plt.subplot(gs[0, 0])
-    ax.minorticks_on()
-    ax.set_xlim(9.0, 16.0)
-    ax.set_ylim(0.0, 3.0)
 
-    ax.set_xlabel(r'Radius $R$ (km)')
-    ax.set_ylabel(r'Mass $M$ (M$_{\odot}$)')
+def find_surface(pmin, rhoc, rad_high):
+    int_pts=10000
+    rad_low=1.e-3
+    r_arr = np.linspace(rad_low, rad_high,int_pts)
+    #r = np.logspace(-4,6.3,N)
+
+    #star = tovsolve(rhoc,r_arr)
+
+    Pc,dummy = eos_from_dens(rhoc,eos_file)
+    rhoc,eden_c,Gamma_c,cs_c = eos_from_pres(Pc,eos_file)
+    #print(f'for pressure in: {Pc:1.2e}, density is {rhoc:1.2e}, edens: {eden_c:1.2e}, Gamma:{Gamma_c} and sound speed: {cs_c:1.2e}')
+    rmin = r_arr[0]
+    #print(f'rmin:{rmin:1.2e}')
+    r3=rmin**3
+    m = 4./3.*np.pi*r3*eden_c
+    #print('g_00',np.sqrt(1-2*const.CGS_G*m/(rmin*const.CGS_C**2)))
+    m_baryon = m/np.sqrt(1-2*const.CGS_G*m/(rmin*const.CGS_C**2))
+    yp=2.
+    
+    var_vec=[Pc, m, m_baryon, yp]
+    
+    #psol = odeint(tov, var_vec, r_arr, rtol=1.0e-6, atol=1.0e-4,tfirst=True)
+    #end_pres = psol[:,0][-1]
+    #return end_pres-pmin
+
+    psol = solve_ivp(tov, [rad_low, rad_high] ,var_vec, method='RK45')
+    return psol.y[0][-1]-pmin
+    ############################
 
     
-    # test single eos separately
-    if False: 
-        key = 'DD2'
-        #key = 'BGN1H1'
-        #key = 'ALF2'
-        #key = 'ENG'
-        #key = 'PAL6'
+    
+    
+###
+time1=time.time()
 
-        dense_eos = get_eos(key)
-        eos = glue_crust_and_core( SLyCrust, dense_eos )
-        t = tov(eos)
+#######################################################3
+pmin=1.e-12
+len_seq=5
+rhoc_arr=np.logspace(np.log10(7.e14),np.log10(3.e15),len_seq)
 
-        mass, rad, rhoc, massBaryon, lambda_dimensionless = t.mass_radius()
-        #print mass
-        #print rad
-	#print rhoc
-        #print massBaryon
-        
+tov_data=[]
+for rhoc in rhoc_arr:
+    #rhoc=4.e14 #cgs
+    rstar = optimize.brentq(lambda rad_high: find_surface(pmin,rhoc,rad_high), 6.e5, 3.e6,rtol=1.e-4)
+    #rstar = optimize.bisect(lambda rad_high: find_surface(pmin,rhoc,rad_high), 6.e5, 3.e6,rtol=1.e-5)
+    
+    #print(rstar/1.e5)
 
-        np.save('m_mB_rad_data/'+key,[mass,rad,rhoc,massBaryon,lambda_dimensionless])
-	ax.plot(rad, mass)
+    time4= time.time()
+    print('time elapsed in root finding:',time4-time1)
 
+    rad_low = 1.e-3; rad_high = rstar
+    int_pts=2000
+    r_arr = np.linspace(rad_low, rad_high,int_pts)
+    #r = np.logspace(-4,6.3,N)
 
-    if True:
-        i = 0
-        for key, value in eosLib.iteritems():
+    #star = tovsolve(rhoc,r_arr)
 
-            print "Solving TOVs for:", key, "(",i, ")"
+    Pc,dummy = eos_from_dens(rhoc,eos_file)
+    rhoc,eden_c,Gamma_c,cs_c = eos_from_pres(Pc,eos_file)
+    print(f'for pressure in: {Pc:1.2e}, density is {rhoc:1.2e}, edens: {eden_c:1.2e}, Gamma:{Gamma_c} and sound speed: {cs_c:1.2e}')
+    rmin = r_arr[0]
+    #print(f'rmin:{rmin:1.2e}')
+    r3=rmin**3
+    m = 4./3.*np.pi*r3*eden_c
+    #print('g_00',np.sqrt(1-2*const.CGS_G*m/(rmin*const.CGS_C**2)))
+    m_baryon = m/np.sqrt(1-2*const.CGS_G*m/(rmin*const.CGS_C**2))
+    yp=2.
+    psol = solve_ivp(tov, [rad_low, rad_high] ,[Pc, m, m_baryon, yp], method='RK45') #,t_eval=r_arr)
+    [P, m, m_baryon, yp] = [psol.y[0][-1], psol.y[1][-1], psol.y[2][-1], psol.y[3][-1]]
 
-            dense_eos = get_eos(key)
-            eos = glue_crust_and_core( SLyCrust, dense_eos )
-            t = tov(eos)
-            mass, rad, rhoc, massBaryon, lambda_dimensionless = t.mass_radius()
-            
-            linestyle='solid'
-            col = 'k'
-            if value[4] == 'npem':
-                col = 'k'
-            if value[4] == 'meson':
-                col = 'b'
-            if value[4] == 'hyperon':
-                col = 'g'
-            if value[4] == 'quark':
-                col = 'r'
-
-            l, = ax.plot(rad, mass, color=col, linestyle=linestyle, alpha = 0.9)
-
-
-            # labels for lines
-            near_y = 1.45
-            near_x = None
-            rotation_offset=180.0
-            if key == 'APR3':
-                near_x = 11.0
-                near_y = None
-            if key == 'ENG':
-                near_x = 11.2
-                near_y = None
-            if key == 'ALF2':
-                near_y = 1.0
-                rotation_offset = 0.0
-            if key == 'MPA1':
-                near_x = 12.0
-                near_y = None
-            if key == 'MS1b':
-                near_y = 0.4
-            if key == 'MS1':
-                near_y = 2.3
-
-            print l
-
-	    np.save('m_mB_rad_data/'+key,[mass,rad,rhoc,massBaryon,lambda_dimensionless])	    
-
-
-            label_line(l, key, near_y=near_y, near_x=near_x, rotation_offset=rotation_offset)
-
-
-            i += 1
-
-
-    #plot approximate central pressure isocurves
-    #twice nuclear saturation density
-    if False:
-        x = [11.0, 15.8]
-        y = [0.4, 2.5]
-        ax.plot(x, y, "r--")
-
-        txt = ax.text(15.5, 2.35, r'$2 \rho_n$', rotation=32, ha='center', va='center', size=8)
-        txt.set_bbox(dict(facecolor='white', edgecolor='none', pad=3))
-
-
-
-
-if __name__ == "__main__":
-    main(sys.argv)
-    plt.subplots_adjust(left=0.15, bottom=0.16, right=0.98, top=0.95, wspace=0.1, hspace=0.1)
-    plt.savefig('mr.pdf')
-
-
+    print(f'FINAL: rstar: {rstar/1.e5:1.2f}, grav. mass: {m/const.CGS_MSUN:1.2f}, bary. mass: {m_baryon/const.CGS_MSUN:1.2f}, yp: {yp}')
+##
+time2 = time.time()
+print('time elapsed:',time2-time4)
 
