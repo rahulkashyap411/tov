@@ -11,7 +11,7 @@ Imported from natj <nattila.joonas@gmail.com>; https://github.com/natj/tov on **
 #rahul/21.Jan.2019: imported from kilonovastandardization project -- https://ui.adsabs.harvard.edu/abs/2019ApJ...886L..19K/abstract 
 
 Code 
-It is still very slow but the results of non-rotating NS sequences matches up to less than 10% against the result from https://bitbucket.org/bernuzzi/tov/src/master/ which I'd recommend for high precision data. 
+It is still very slow but the results of non-rotating NS sequences matches up to less than 10% against the result from https://bitbucket.org/bernuzzi/tov/src/master/ which I'd recommend for high precision and computationally low-cost data. 
 ## To Do:
 * add thermodynamimc consistent interpolation of EOS tables. 
 * add numerical error in maximum mass and interpolation error. 
