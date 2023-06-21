@@ -16,12 +16,18 @@ Additions:
 #rahul/21.Jan.2019: imported from kilonovastandardization project
 """
 
-#import time
+import time
 from tovlib import *
 from scipy.integrate import solve_ivp
-#eos_file = './eos_tables/BLH_new_14-Apr-2020.lorene'
-#eos_file = './eos_tables/SLy.lorene'
+## Root finding by reducing the radial interval and by using scipy.rootfind functions. 
+## Works and matches with the MATLAB code.. although there are problems of (1) Speed and (2) accuracy 
+from scipy import optimize
 
+#eos_file = './eos_tables/eosDD2F-SF.lorene'
+#eos_file = './eos_tables/eosDD2.lorene'
+#eos_file = './eos_tables/eos0.lorene'  #eosBHB
+#eos_file = './eos_tables/BLH_new_14-Apr-2020.lorene'
+eos_file = './eos_tables/eosSLy.lorene'
 
 is_sorted = lambda x: (np.diff(x)>=0).all()
 
@@ -91,8 +97,9 @@ fm=1.e-13 #1femotometer in cm
 dens_conversion=const.CGS_AMU/(fm**3)
 edens_conversion=const.CGS_C**2
 
+"""
 eos_dir = './eos_tables/'
-eos_list=['eosDD2'] #['eosSLy','eosDD2','eos0']  #['eosSLy'] #,'eosDD2']
+eos_list=['eosDD2','eosDD2F-SF','eos0','eosSLy']  #['eosSLy'] #['eosSLy','eosDD2','eos0']  #['eosSLy'] #,'eosDD2']
 c_list=['r','b','c','k','g']
 p_new=np.logspace(np.log10(6.e17),np.log10(1.e38),300)
 fig,((ax1,ax2),(ax3,ax4))=plt.subplots(nrows=2,ncols=2,figsize=(12,12))
@@ -140,10 +147,10 @@ for eoskey,color in zip(eos_list,c_list):
 ax4.axhline(1/np.sqrt(3),ls='--',c='k',label='conformal limit cs: $c/\sqrt{3}$')
 ax4.legend(loc=4)
 plt.tight_layout()
-#plt.savefig('eos_plots_phase.png',dpi=150)
+plt.savefig('eos_plots_phase.png',dpi=150)
+#plt.show()
 
-plt.show()
-
+"""
 ## saving eos data in a file in a specific format -- 
 """key='BLQ'
 rho_new,edens_new,gamma_new=eos_from_pres(p_new,'./eos_tables/BLQ_gibbs_180_10-Mar-2020.lorene') #returns in cgs
@@ -156,13 +163,6 @@ index=np.array([int(i) for i in range(len(p_new))])
 np.savetxt(f'./eos_tables/{key}_data.out',np.c_[index, rho_new/dens_conversion, edens_new/edens_conversion, p_new, gamma_new],header='\n#i rho edens pres gamma',comments=f'#density, pressure and energy density in cgs units for eos={key}.\n')
 """
 
-## Root finding by reducing the radial interval and by using scipy.rootfind functions. 
-## Works and matches with the MATLAB code.. although there are problems of (1) Speed and (2) accuracy 
-from scipy import optimize
-eos_file = './eos_tables/eos4.lorene'
-#eos_file = './eos_tables/eos0.lorene'  #eosBHB
-
-
 def calc_tidal_deformability(C, Y):
     # """ Compute the dimensionless tidal deformability parameter Lambda from the compactness C and 
     # the Lindblom y-potential at the surface of a polytropic star"""
@@ -173,7 +173,7 @@ def calc_tidal_deformability(C, Y):
     return Lambda_dimensionless
 
 def tov(r,y):
-
+    #print('inside tov',eos_file)
     [P, m, m_baryon, yp] = y
     #if(P<0):
     #    sys.exit()
@@ -194,7 +194,9 @@ def tov(r,y):
 
     return [dPdr, dmdr, dm_baryondr,dypdr]
 
-def tovsolve(rhoc,r_arr):
+def tovsolve(rhoc,r_arr,eos_file='./eos_tables/eosSLy.lorene'):
+    #print('inside tovsolve',eos_file)
+    print('rhoc=',rhoc)
     P,dummy = eos_from_dens(rhoc,eos_file)
     rho,eden,Gamma,cs = eos_from_pres(P,eos_file)
     
@@ -208,14 +210,16 @@ def tovsolve(rhoc,r_arr):
     yp=2.
     #psol = odeint(tov, [P, m, m_baryon, yp], r_arr, rtol=1.0e-6, atol=1.0e-4,tfirst=True)
 
-    psol = solve_ivp(tov, [rad_low, rad_high] ,[P, m, m_baryon, yp], method='RK45',t_eval=r_arr)
+    psol = solve_ivp(tov, [rad_low, rad_high] ,[P, m, m_baryon, yp,eos_file], method='RK45',t_eval=r_arr)
     #print m, m_baryon, rhoc
     #return r_arr, psol[:,0], psol[:,1], psol[:,2], psol[:,3]
     return psol.t, psol.y[0], psol.y[1], psol.y[2], psol.y[3] 
 
 
-def find_surface(pmin, rhoc, rad_high):
-    int_pts=10000
+def find_surface(pmin, rhoc, rad_high,eos_file='./eos_tables/eosSLy.lorene'):
+    print('inside find_surface',eos_file)
+    print('rhoc=',rhoc)
+    int_pts=2000
     rad_low=1.e-3
     r_arr = np.linspace(rad_low, rad_high,int_pts)
     #r = np.logspace(-4,6.3,N)
@@ -248,22 +252,27 @@ def find_surface(pmin, rhoc, rad_high):
     
 ###
 time1=time.time()
-
+print('eos_file=',eos_file)
+eos_key=eos_file.split('./eos_tables/')[1].split('.lorene')[0]
+f = open(f"tov_{eos_key}.txt", "w+")
+f.write(f"#for eos = {eos_file} \n#Grav_Mass (solar mass) Radius (km) Lambda (dimensionless) rhoc (gm/cm^3) Compactness (dimensionless) Baryon_Mass (solar mass) \n")
+f.close()
 #######################################################3
-pmin=1.e-12
+pmin=1.e-10
 len_seq=5
-rhoc_arr=np.logspace(np.log10(7.e14),np.log10(3.e15),len_seq)
+rhoc_arr=np.logspace(np.log10(6.e14),np.log10(5.e15),len_seq)
 
 tov_data=[]
 for rhoc in rhoc_arr:
     #rhoc=4.e14 #cgs
-    rstar = optimize.brentq(lambda rad_high: find_surface(pmin,rhoc,rad_high), 6.e5, 3.e6,rtol=1.e-4)
+    time5= time.time()
+    rstar = optimize.brentq(lambda rad_high: find_surface(pmin,rhoc,rad_high,eos_file=eos_file), 6.e5, 3.e6,rtol=1.e-4)
     #rstar = optimize.bisect(lambda rad_high: find_surface(pmin,rhoc,rad_high), 6.e5, 3.e6,rtol=1.e-5)
     
     #print(rstar/1.e5)
 
     time4= time.time()
-    print('time elapsed in root finding:',time4-time1)
+    print('time elapsed in root finding:',time4-time5)
 
     rad_low = 1.e-3; rad_high = rstar
     int_pts=2000
@@ -286,7 +295,15 @@ for rhoc in rhoc_arr:
     [P, m, m_baryon, yp] = [psol.y[0][-1], psol.y[1][-1], psol.y[2][-1], psol.y[3][-1]]
 
     print(f'FINAL: rstar: {rstar/1.e5:1.2f}, grav. mass: {m/const.CGS_MSUN:1.2f}, bary. mass: {m_baryon/const.CGS_MSUN:1.2f}, yp: {yp}')
+    C=(const.CGS_G/const.CGS_C**2)*m/rstar
+    lambda_dimensionless = calc_tidal_deformability(C,yp)
+    
+    f = open(f"tov_{eos_key}.txt", "a")
+    f.write(f"{m/const.CGS_MSUN:1.4f}  {rstar/1.e5:2.4f}  {lambda_dimensionless:2.4f}  {rhoc:1.4e}  {C:2.4f}  {m_baryon/const.CGS_MSUN:1.4f}\n")
+    f.close()
+
+    print(f'FINAL: rstar: {rstar/1.e5:1.2f}, grav. mass: {m/const.CGS_MSUN:1.2f}, bary. mass: {m_baryon/const.CGS_MSUN:1.2f}, yp: {yp}, lambda: {lambda_dimensionless:2.4f},   rhoc: {rhoc:1.4e}, compactness:  {C:2.4f}')
 ##
 time2 = time.time()
-print('time elapsed:',time2-time4)
+print('total time elapsed:',time2-time1)
 
